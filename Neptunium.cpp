@@ -6,14 +6,14 @@ Neptunium::Neptunium(const char* moduleName)
 {
     HMODULE handle = GetModuleHandleA(moduleName);
     if (!handle) return;
-        
+
     auto* dosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(handle);
     if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return;
-        
+
     auto* ntHeaders = reinterpret_cast<PIMAGE_NT_HEADERS>(
         reinterpret_cast<uint8_t*>(handle) + dosHeader->e_lfanew);
     if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return;
-        
+
     mModuleBase = reinterpret_cast<uintptr_t>(handle);
     mModuleSize = ntHeaders->OptionalHeader.SizeOfImage;
 
@@ -24,7 +24,7 @@ std::vector<uintptr_t> Neptunium::Base(const void* pattern, size_t valueSize, un
 {
     std::vector<uintptr_t> results;
     if (!mModuleBase || valueSize == 0) return results;
-        
+
     const uintptr_t moduleEnd = mModuleBase + mModuleSize;
     const char* bytes = static_cast<const char*>(pattern);
 
@@ -42,10 +42,10 @@ std::vector<uintptr_t> Neptunium::Base(const void* pattern, size_t valueSize, un
 
         uintptr_t regionStart = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
         size_t regionSize = mbi.RegionSize;
-        
-        if (regionStart >= moduleEnd) break;  
+
+        if (regionStart >= moduleEnd) break;
         if (regionStart + regionSize > moduleEnd) regionSize = moduleEnd - regionStart;
-            
+
         if (regionSize < valueSize)
         {
             base = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
@@ -91,7 +91,7 @@ std::vector<uintptr_t> Neptunium::BaseEx(const void* pattern, size_t valueSize, 
 
     uintptr_t max = reinterpret_cast<uintptr_t>(si.lpMaximumApplicationAddress);
     uintptr_t base = reinterpret_cast<uintptr_t>(si.lpMinimumApplicationAddress);
-    
+
     MEMORY_BASIC_INFORMATION mbi = {};
     while (base < max && VirtualQuery(reinterpret_cast<LPCVOID>(base), &mbi, sizeof(mbi)))
     {
@@ -165,7 +165,13 @@ std::vector<uintptr_t> Neptunium::RTTI(const char* object, const char* moduleNam
         constexpr uintptr_t offset = sizeof(void*) + sizeof(uintptr_t) + 0x4;  //0x4 Padding string
         uintptr_t vTable = address - offset;
         uintptr_t spare = vTable + sizeof(uintptr_t);
+
+#ifdef _WIN64
         long long spareValue = *reinterpret_cast<long long*>(spare);
+#else
+        int spareValue = *reinterpret_cast<int*>(spare);
+#endif
+
         if (spareValue == 0)
         {
             type = vTable;
@@ -173,10 +179,14 @@ std::vector<uintptr_t> Neptunium::RTTI(const char* object, const char* moduleNam
 
     }
     cout << "Type" << ": 0x" << hex << uppercase << type << nouppercase << dec << endl;
-	if (!type) return {}; 
+    if (!type) return {};
 
+#ifdef _WIN64
     uintptr_t typeOffset = type - target.mModuleBase;
     vector<uintptr_t> typeDescriptor = target.Int(static_cast<int>(typeOffset), PAGE_READONLY);
+#else
+    vector<uintptr_t> typeDescriptor = target.Int(type, PAGE_READONLY);
+#endif
 
     uintptr_t signature = {};
     for (const auto& address : typeDescriptor)
@@ -185,7 +195,12 @@ std::vector<uintptr_t> Neptunium::RTTI(const char* object, const char* moduleNam
 
         uintptr_t col_signature = address - 0xC;
         int col_signatureValue = *reinterpret_cast<int*>(col_signature);
-        if (col_signatureValue != 1) continue;  //x64 = 1 , x86 = 0
+
+#ifdef _WIN64
+        if (col_signatureValue != 1) continue;
+#else
+        if (col_signatureValue != 0) continue;
+#endif
 
         uintptr_t col_offset = address - 0x8;
         int col_offsetValue = *reinterpret_cast<int*>(col_offset);
@@ -218,9 +233,15 @@ std::vector<uintptr_t> Neptunium::RTTI(const char* object, const char* moduleNam
     uintptr_t col = signature - 0xC;
     cout << "COL" << ": 0x" << hex << uppercase << col << nouppercase << dec << endl;
 
+#ifdef _WIN64
     uintptr_t meta = target.Long(col, PAGE_READONLY)[0];
-    uintptr_t vTable = meta + 0x8;
-    return target.LongEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);  //Pollution
+    uintptr_t vTable = meta + sizeof(uintptr_t);
+    return target.LongEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);  //Stack Pollution
+#else
+    uintptr_t meta = target.Int(col, PAGE_WRITECOPY)[0];
+    uintptr_t vTable = meta + sizeof(uintptr_t);
+    return target.IntEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);  //Stack Pollution
+#endif
 
 
 }
