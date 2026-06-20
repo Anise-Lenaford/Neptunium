@@ -183,9 +183,9 @@ std::vector<uintptr_t> Neptunium::RTTI(const char* object, const char* moduleNam
 
 #ifdef _WIN64
     uintptr_t typeOffset = type - target.mModuleBase;
-    vector<uintptr_t> typeDescriptor = target.Int(static_cast<int>(typeOffset), PAGE_READONLY);
+    vector<uintptr_t> typeDescriptor = target.Int(static_cast<int>(typeOffset), PAGE_READONLY | PAGE_EXECUTE_READWRITE);
 #else
-    vector<uintptr_t> typeDescriptor = target.Int(type, PAGE_READONLY);
+    vector<uintptr_t> typeDescriptor = target.Int(type, PAGE_READONLY | PAGE_EXECUTE_READWRITE);
 #endif
 
     uintptr_t signature = {};
@@ -234,11 +234,11 @@ std::vector<uintptr_t> Neptunium::RTTI(const char* object, const char* moduleNam
     cout << "COL" << ": 0x" << hex << uppercase << col << nouppercase << dec << endl;
 
 #ifdef _WIN64
-    uintptr_t meta = target.Long(col, PAGE_READONLY)[0];
+    uintptr_t meta = target.Long(col, PAGE_READONLY | PAGE_EXECUTE_READWRITE)[0];
     uintptr_t vTable = meta + sizeof(uintptr_t);
     return target.LongEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);  //Stack Pollution
 #else
-    uintptr_t meta = target.Int(col, PAGE_WRITECOPY)[0];
+    uintptr_t meta = target.Int(col, PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)[0];
     uintptr_t vTable = meta + sizeof(uintptr_t);
     return target.IntEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);  //Stack Pollution
 #endif
