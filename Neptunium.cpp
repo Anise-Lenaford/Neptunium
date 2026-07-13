@@ -155,92 +155,57 @@ std::vector<uintptr_t> Neptunium::RTTI(const char* object, const char* moduleNam
         return {};
     }
 
-    vector<uintptr_t> padName = target.String(object, PAGE_READWRITE | PAGE_WRITECOPY);
-
-    uintptr_t type = {};
-    for (const auto& address : padName)
+    string objectName = ".?AV" + string(object) + "@@";
+    vector<uintptr_t> name_List = target.String(objectName.c_str(), PAGE_READWRITE | PAGE_WRITECOPY);
+    if (name_List.empty())
     {
-        cout << "PadName" << ": 0x" << hex << uppercase << address << nouppercase << dec << endl;
-
-        constexpr uintptr_t offset = sizeof(void*) + sizeof(uintptr_t) + 0x4;  //0x4 Padding string
-        uintptr_t vTable = address - offset;
-        uintptr_t spare = vTable + sizeof(uintptr_t);
-
-#ifdef _WIN64
-        long long spareValue = *reinterpret_cast<long long*>(spare);
-#else
-        int spareValue = *reinterpret_cast<int*>(spare);
-#endif
-
-        if (spareValue == 0)
-        {
-            type = vTable;
-        }
-
+        cout << "Name Not Found" << endl;
+        return {};
     }
-    cout << "Type" << ": 0x" << hex << uppercase << type << nouppercase << dec << endl;
-    if (!type) return {};
+
+    TypeDescriptor* pTypeDescriptor = reinterpret_cast<TypeDescriptor*>(name_List[0] - offsetof(TypeDescriptor, name));
+    cout << "pTypeDescriptor" << ": 0x" << hex << uppercase << pTypeDescriptor << nouppercase << dec << endl;
+    if (pTypeDescriptor == nullptr) return {};
 
 #ifdef _WIN64
-    uintptr_t typeOffset = type - target.mModuleBase;
-    vector<uintptr_t> typeDescriptor = target.Int(static_cast<int>(typeOffset), PAGE_READONLY | PAGE_EXECUTE_READWRITE);
+    unsigned int typeDescriptor_ = static_cast<unsigned int>(reinterpret_cast<uintptr_t>(pTypeDescriptor) - target.mModuleBase);
 #else
-    vector<uintptr_t> typeDescriptor = target.Int(type, PAGE_READONLY | PAGE_EXECUTE_READWRITE);
+    unsigned int typeDescriptor_ = static_cast<unsigned int>(reinterpret_cast<uintptr_t>(pTypeDescriptor));
 #endif
 
-    uintptr_t signature = {};
-    for (const auto& address : typeDescriptor)
+    vector<uintptr_t> typeDescriptor_List = target.Int(typeDescriptor_, PAGE_EXECUTE_READWRITE | PAGE_READONLY);
+    if (typeDescriptor_List.empty())
+    {
+        cout << "TypeDescriptor Not Found" << endl;
+        return {};
+    }
+
+    uintptr_t col{};
+    for (const auto& address : typeDescriptor_List)
     {
         cout << "TypeDescriptor" << ": 0x" << hex << uppercase << address << nouppercase << dec << endl;
 
-        uintptr_t col_signature = address - 0xC;
-        int col_signatureValue = *reinterpret_cast<int*>(col_signature);
+        _s_RTTICompleteObjectLocator* pCOL = reinterpret_cast<_s_RTTICompleteObjectLocator*>(address - offsetof(_s_RTTICompleteObjectLocator, pTypeDescriptor));
+        if (pCOL->signature != _RTTI_RELATIVE_TYPEINFO) continue;
+		if (pCOL->offset != 0) continue;
+        if (pCOL->cdOffset != 0) continue;
 
-#ifdef _WIN64
-        if (col_signatureValue != 1) continue;
-#else
-        if (col_signatureValue != 0) continue;
-#endif
+        _s_RTTIBaseClassDescriptor* pBCD = reinterpret_cast<_s_RTTIBaseClassDescriptor*>(address - offsetof(_s_RTTIBaseClassDescriptor, pTypeDescriptor));
+        if (pBCD->where.mdisp == 0 && pBCD->where.pdisp == -1 && pBCD->where.vdisp == 0) continue;
 
-        uintptr_t col_offset = address - 0x8;
-        int col_offsetValue = *reinterpret_cast<int*>(col_offset);
-        if (col_offsetValue != 0) continue;
-
-        uintptr_t pmd_pad_0 = address + 0x8;
-        int pmdValue = *reinterpret_cast<int*>(pmd_pad_0);
-        if (pmdValue == 0)
-        {
-            uintptr_t pmd_pad_4 = address + 0xC;
-            int pmdValue = *reinterpret_cast<int*>(pmd_pad_4);
-            if (pmdValue == -1)
-            {
-                uintptr_t pmd_pad_8 = address + 0x10;
-                int pmdValue = *reinterpret_cast<int*>(pmd_pad_8);
-                if (pmdValue == 0)
-                {
-                    continue;
-                }
-            }
-
-        }
-
-        signature = address;
-        cout << "Signature" << ": 0x" << hex << uppercase << signature << nouppercase << dec << endl;
-
+        col = address - offsetof(_s_RTTICompleteObjectLocator, pTypeDescriptor);
+        cout << "pCompleteObjectLocator" << ": 0x" << hex << uppercase << col << nouppercase << dec << endl;
+        break;
     }
 
-
-    uintptr_t col = signature - 0xC;
-    cout << "COL" << ": 0x" << hex << uppercase << col << nouppercase << dec << endl;
+    if (col == NULL) return{};
 
 #ifdef _WIN64
-    uintptr_t meta = target.Long(col, PAGE_READONLY | PAGE_EXECUTE_READWRITE)[0];
-    uintptr_t vTable = meta + sizeof(uintptr_t);
-    return target.LongEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);  //Stack Pollution
+    uintptr_t vTable = target.Long(col, PAGE_EXECUTE_READWRITE)[0] + sizeof(void*);
+    return target.LongEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);
 #else
-    uintptr_t meta = target.Int(col, PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE)[0];
-    uintptr_t vTable = meta + sizeof(uintptr_t);
-    return target.IntEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);  //Stack Pollution
+    uintptr_t vTable = target.Int(col, PAGE_EXECUTE_READWRITE)[0] + sizeof(void*);
+    return target.IntEx(vTable, PAGE_READWRITE | PAGE_WRITECOPY);
 #endif
 
 
